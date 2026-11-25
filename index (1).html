@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Classroom Visualiser</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lexend:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+:root{--board:#10222e;--panel:#1b3445;--chalk:#f4f1e8;--marker:#ffd23f;--danger:#ff6b5e;--ok:#3ddc84}
+*{box-sizing:border-box;margin:0}
+html,body{height:100%;background:var(--board);color:var(--chalk);font-family:Lexend,system-ui,sans-serif;overflow:hidden}
+button{font:inherit;color:inherit;cursor:pointer;border:0}
+button:focus-visible,input:focus-visible{outline:4px solid var(--marker);outline-offset:3px}
+.view{display:none;position:fixed;inset:0;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+.view.on{display:flex}
+
+/* Lobby */
+#lobby{align-items:center;justify-content:center;gap:6vw;padding:4vh 5vw;flex-wrap:wrap}
+#qrbox{background:#fff;padding:2vmin;border-radius:2vmin;line-height:0}
+#qr img,#qr canvas{width:min(48vh,40vw,420px)!important;height:auto!important}
+.lobby-text{max-width:30rem}
+h1{font-size:clamp(2rem,4.5vw,3.6rem);font-weight:800;line-height:1.1}
+.lobby-text p{font-size:clamp(1.1rem,2vw,1.6rem);margin-top:1rem;opacity:.9}
+.pin{font-size:clamp(3.5rem,9vw,7rem);font-weight:800;letter-spacing:.18em;color:var(--marker);margin-top:1.2rem;line-height:1}
+.small{font-size:1rem!important;opacity:.65!important}
+.small a{color:var(--chalk)}
+
+/* Live */
+#live{background:#000}
+.stage{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%)}
+.stage video,.stage canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000}
+.stage canvas{display:none}
+.stage.frozen canvas{display:block}
+#bar{position:fixed;left:50%;bottom:calc(2vh + env(safe-area-inset-bottom));transform:translateX(-50%);display:flex;gap:1.2vmin;padding:1.2vmin;background:rgba(16,34,46,.92);border-radius:2.5vmin;transition:opacity .3s,transform .3s;max-width:96vw;flex-wrap:wrap;justify-content:center}
+#bar.hide{opacity:0;pointer-events:none;transform:translate(-50%,20px)}
+.btn{display:flex;flex-direction:column;align-items:center;gap:.3rem;min-width:clamp(78px,9vw,130px);padding:1.2vmin 1.5vmin;background:var(--panel);border-radius:2vmin;font-size:clamp(.9rem,1.4vw,1.25rem);font-weight:600}
+.btn .i{font-size:clamp(1.8rem,3.4vw,3rem);line-height:1}
+.btn:hover,.btn[aria-pressed=true]{background:var(--marker);color:var(--board)}
+.btn.end{background:var(--danger);color:#fff}
+#adjust{position:fixed;left:50%;bottom:calc(2vh + 22vmin);transform:translateX(-50%);display:none;background:rgba(16,34,46,.95);padding:2.5vmin 3vmin;border-radius:2.5vmin;width:min(560px,92vw)}
+#adjust.on{display:block}
+#adjust label{display:flex;align-items:center;gap:1rem;font-size:1.3rem;font-weight:600;margin-bottom:1rem}
+#adjust label span{width:6.5rem}
+#adjust input{flex:1;height:2.5rem;accent-color:var(--marker)}
+#adjust .btn{flex-direction:row;justify-content:center;width:100%;min-width:0}
+#toast{position:fixed;top:3vh;left:50%;transform:translateX(-50%);background:var(--marker);color:var(--board);font-weight:600;font-size:1.4rem;padding:.8rem 1.6rem;border-radius:99px;opacity:0;transition:opacity .3s;pointer-events:none}
+#toast.on{opacity:1}
+
+/* Phone */
+#sender{flex-direction:column;background:var(--board)}
+#banner{padding:1.1rem 1rem;text-align:center;font-weight:800;font-size:1.5rem;background:var(--panel)}
+#banner.live{background:var(--ok);color:#06210f}
+#banner.bad{background:var(--danger);color:#fff}
+#preview{flex:1;min-height:0;width:100%;object-fit:contain;background:#000}
+.phone-ctl{display:flex;gap:.8rem;padding:1rem}
+.phone-ctl .btn{flex:1;min-width:0;padding:1rem}
+
+/* Join */
+#join{flex-direction:column;align-items:center;justify-content:center;gap:1.5rem;padding:2rem;text-align:center}
+#pinIn{font:800 3rem Lexend,sans-serif;width:min(14rem,80vw);text-align:center;letter-spacing:.2em;padding:.6rem;border-radius:1rem;border:4px solid var(--marker);background:var(--panel);color:var(--chalk)}
+#join .btn{flex-direction:row;padding:1rem 2.5rem;font-size:1.5rem;background:var(--marker);color:var(--board)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+
+<!-- Laptop: lobby -->
+<main id="lobby" class="view">
+  <div id="qrbox"><div id="qr"></div></div>
+  <div class="lobby-text">
+    <h1>Scan with your phone camera to cast to the board.</h1>
+    <p>Or open this page on your phone and type the PIN:</p>
+    <div class="pin" id="pin">····</div>
+    <p class="small" id="url"></p>
+  </div>
+</main>
+
+<!-- Laptop: live -->
+<section id="live" class="view">
+  <div class="stage" id="stage"><video id="video" autoplay playsinline muted></video><canvas id="frozen"></canvas></div>
+  <div id="adjust">
+    <label><span>Brightness</span><input id="bri" type="range" min="50" max="200" value="100"></label>
+    <label><span>Contrast</span><input id="con" type="range" min="50" max="250" value="100"></label>
+    <button class="btn" id="reset">Reset</button>
+  </div>
+  <div id="bar">
+    <button class="btn" id="freeze" aria-pressed="false"><span class="i">⏸️</span>Freeze</button>
+    <button class="btn" id="rotate"><span class="i">🔄</span>Rotate</button>
+    <button class="btn" id="snap"><span class="i">📸</span>Snapshot</button>
+    <button class="btn" id="adj" aria-pressed="false"><span class="i">☀️</span>Brightness</button>
+    <button class="btn" id="full"><span class="i">⛶</span>Full screen</button>
+    <button class="btn end" id="end"><span class="i">❌</span>End session</button>
+  </div>
+  <div id="toast"></div>
+</section>
+
+<!-- Phone: sender -->
+<section id="sender" class="view">
+  <div id="banner">Connecting…</div>
+  <video id="preview" autoplay playsinline muted></video>
+  <div class="phone-ctl">
+    <button class="btn" id="flip"><span class="i">🔁</span>Front / rear</button>
+    <button class="btn" id="torch" hidden aria-pressed="false"><span class="i">🔦</span>Torch</button>
+  </div>
+</section>
+
+<!-- Phone: enter PIN -->
+<section id="join" class="view">
+  <h1>Enter the PIN on the board</h1>
+  <input id="pinIn" inputmode="numeric" maxlength="4" placeholder="0000" autocomplete="off">
+  <button class="btn" id="go">Connect</button>
+</section>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const PREFIX = 'classviz-';
+const params = new URLSearchParams(location.search);
+const show = id => document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id === id));
+const toast = msg => { const t = $('toast'); t.textContent = msg; t.classList.add('on'); setTimeout(() => t.classList.remove('on'), 1800); };
+let peer = null, call = null;
+
+/* ================= RECEIVER (laptop / whiteboard) ================= */
+let rot = 0, frozen = false, hideTimer;
+
+function startReceiver() {
+  show('lobby');
+  $('qr').innerHTML = '';
+  $('pin').textContent = '····';
+  const pin = String(Math.floor(1000 + Math.random() * 9000));
+  peer = new Peer(PREFIX + pin);
+  peer.on('open', () => {
+    const base = location.origin + location.pathname;
+    $('pin').textContent = pin;
+    $('url').innerHTML = 'Phone link: ' + base + '<br><a href="?join">Casting from this device? Enter a PIN</a>';
+    new QRCode($('qr'), { text: base + '?pin=' + pin, width: 420, height: 420, correctLevel: QRCode.CorrectLevel.M });
+  });
+  peer.on('error', e => {
+    if (e.type === 'unavailable-id') { peer.destroy(); startReceiver(); }   // PIN clash: pick another
+    else if (e.type === 'network' || e.type === 'server-error') $('pin').textContent = 'Offline';
+  });
+  peer.on('call', c => {
+    if (call) { const old = call; call = null; old.close(); }
+    call = c;
+    c.answer();
+    c.on('stream', s => {
+      $('video').srcObject = s;
+      resetView();
+      show('live');
+      wakeShow();
+    });
+    c.on('close', () => { if (call === c) endSession(); });
+  });
+}
+
+function endSession() {
+  if (call) { const c = call; call = null; c.close(); }
+  $('video').srcObject = null;
+  if (peer) peer.destroy();
+  startReceiver();
+}
+
+function applyView() {
+  const odd = rot % 180 !== 0, s = $('stage');
+  s.style.width = odd ? '100vh' : '100vw';
+  s.style.height = odd ? '100vw' : '100vh';
+  s.style.transform = `translate(-50%,-50%) rotate(${rot}deg)`;
+  s.style.filter = filterStr();
+}
+const filterStr = () => `brightness(${$('bri').value}%) contrast(${$('con').value}%)`;
+function resetView() {
+  rot = 0; $('bri').value = 100; $('con').value = 100;
+  setFrozen(false); $('adjust').classList.remove('on'); applyView();
+}
+
+function setFrozen(on) {
+  frozen = on;
+  const v = $('video'), c = $('frozen');
+  if (on) { c.width = v.videoWidth; c.height = v.videoHeight; c.getContext('2d').drawImage(v, 0, 0); }
+  $('stage').classList.toggle('frozen', on);
+  const b = $('freeze');
+  b.setAttribute('aria-pressed', on);
+  b.innerHTML = on ? '<span class="i">▶️</span>Unfreeze' : '<span class="i">⏸️</span>Freeze';
+}
+
+function snapshot() {
+  const v = $('video'), src = frozen ? $('frozen') : v;
+  const w = v.videoWidth, h = v.videoHeight;
+  if (!w) return;
+  const odd = rot % 180 !== 0, c = document.createElement('canvas');
+  c.width = odd ? h : w; c.height = odd ? w : h;
+  const x = c.getContext('2d');
+  x.filter = filterStr();
+  x.translate(c.width / 2, c.height / 2);
+  x.rotate(rot * Math.PI / 180);
+  x.drawImage(src, -w / 2, -h / 2, w, h);
+  c.toBlob(b => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(b);
+    a.download = 'visualiser-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.png';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    toast('Snapshot saved');
+  }, 'image/png');
+}
+
+function wakeShow() {   // control bar fades after 5s of no touch/mouse
+  $('bar').classList.remove('hide');
+  clearTimeout(hideTimer);
+  hideTimer = setTimeout(() => {
+    if (!$('adjust').classList.contains('on')) $('bar').classList.add('hide');
+  }, 5000);
+}
+
+$('freeze').onclick = () => setFrozen(!frozen);
+$('rotate').onclick = () => { rot = (rot + 90) % 360; applyView(); };
+$('snap').onclick = snapshot;
+$('adj').onclick = () => {
+  const on = $('adjust').classList.toggle('on');
+  $('adj').setAttribute('aria-pressed', on);
+};
+$('bri').oninput = $('con').oninput = applyView;
+$('reset').onclick = () => { $('bri').value = 100; $('con').value = 100; applyView(); };
+$('full').onclick = () => document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+$('end').onclick = () => { if (confirm('End the session and show a new QR code?')) endSession(); };
+['pointerdown', 'pointermove', 'keydown'].forEach(ev => $('live').addEventListener(ev, wakeShow));
+
+/* ================= SENDER (phone) ================= */
+let stream = null, facing = 'environment', torchOn = false;
+const banner = (text, cls = '') => { $('banner').textContent = text; $('banner').className = cls; };
+
+async function getCamera() {
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: { ideal: facing }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+    audio: false
+  });
+  $('preview').srcObject = stream;
+  torchOn = false; $('torch').setAttribute('aria-pressed', false);
+  const caps = stream.getVideoTracks()[0].getCapabilities ? stream.getVideoTracks()[0].getCapabilities() : {};
+  $('torch').hidden = !caps.torch;
+  return stream;
+}
+
+async function startSender(pin) {
+  show('sender');
+  banner('Connecting…');
+  try { await getCamera(); }
+  catch (e) { return banner('Camera blocked. Allow camera access in your browser settings, then reload.', 'bad'); }
+
+  try { if (navigator.wakeLock) await navigator.wakeLock.request('screen'); } catch (e) {}
+
+  peer = new Peer();
+  peer.on('open', () => {
+    call = peer.call(PREFIX + pin, stream);
+    call.on('stream', () => {});
+    // Receiver answers with no stream; treat first ICE connect as "live"
+    const check = setInterval(() => {
+      const pc = call.peerConnection;
+      if (pc && ['connected', 'completed'].includes(pc.iceConnectionState)) {
+        banner('Live on Whiteboard', 'live'); clearInterval(check);
+      }
+    }, 300);
+    call.on('close', () => { clearInterval(check); banner('Session ended. Scan the new code to start again.', 'bad'); });
+  });
+  peer.on('error', e => banner(e.type === 'peer-unavailable'
+    ? 'No board found for that PIN. Check the number and try again.' : 'Connection problem. Reload to retry.', 'bad'));
+}
+
+$('flip').onclick = async () => {
+  facing = facing === 'environment' ? 'user' : 'environment';
+  try {
+    await getCamera();
+    const sender = call && call.peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
+    if (sender) sender.replaceTrack(stream.getVideoTracks()[0]);
+  } catch (e) { banner('Could not switch camera', 'bad'); }
+};
+$('torch').onclick = async () => {
+  torchOn = !torchOn;
+  try {
+    await stream.getVideoTracks()[0].applyConstraints({ advanced: [{ torch: torchOn }] });
+    $('torch').setAttribute('aria-pressed', torchOn);
+  } catch (e) { torchOn = false; }
+};
+
+/* ================= JOIN BY PIN ================= */
+$('go').onclick = () => { const v = $('pinIn').value.trim(); if (/^\d{4}$/.test(v)) location.search = '?pin=' + v; else $('pinIn').focus(); };
+$('pinIn').onkeydown = e => { if (e.key === 'Enter') $('go').click(); };
+
+/* ================= ROUTE ================= */
+if (params.get('pin')) startSender(params.get('pin'));
+else if (params.has('join')) { show('join'); $('pinIn').focus(); }
+else startReceiver();
+</script>
+</body>
+</html>
